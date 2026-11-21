@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>pdf2md — PDF를 Markdown으로</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1c1b18; --muted: #6b6860;
+    --line: #e3e0d8; --accent: #2f5d50; --accent-soft: #e4eeea; --danger: #a33a2b;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151513; --panel:#1e1e1b; --ink:#ecebe6; --muted:#9a978e;
+            --line:#33322d; --accent:#7fb8a6; --accent-soft:#24312d; --danger:#e07a6a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font: 15px/1.55 -apple-system, "Apple SD Gothic Neo", "Pretendard", system-ui, sans-serif; }
+  .wrap { display:grid; grid-template-columns: 360px 1fr; gap:20px; padding:20px; height:100vh; }
+  @media (max-width: 900px) { .wrap { grid-template-columns:1fr; height:auto; } }
+  aside, main { background:var(--panel); border:1px solid var(--line); border-radius:12px; min-height:0; }
+  aside { display:flex; flex-direction:column; padding:20px; gap:18px; overflow:auto; }
+  h1 { font-size:20px; margin:0; letter-spacing:-0.01em; }
+  h1 span { color:var(--muted); font-weight:500; font-size:14px; display:block; margin-top:2px; }
+
+  .drop { border:1.5px dashed var(--line); border-radius:10px; padding:28px 16px; text-align:center;
+          cursor:pointer; transition: border-color .15s, background .15s; color:var(--muted); }
+  .drop:hover, .drop.over { border-color:var(--accent); background:var(--accent-soft); color:var(--ink); }
+  .drop strong { color:var(--ink); display:block; margin-bottom:4px; }
+
+  fieldset { border:0; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
+  legend { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:6px; }
+  label.opt { display:flex; gap:10px; align-items:flex-start; cursor:pointer; padding:8px 10px;
+              border:1px solid var(--line); border-radius:8px; }
+  label.opt:has(input:checked) { border-color:var(--accent); background:var(--accent-soft); }
+  label.opt small { display:block; color:var(--muted); font-size:12.5px; }
+  input[type=radio], input[type=checkbox] { accent-color: var(--accent); margin-top:4px; }
+
+  .jobs { display:flex; flex-direction:column; gap:6px; }
+  .job { display:grid; grid-template-columns:1fr auto; gap:2px 8px; padding:10px 12px; border-radius:8px;
+         border:1px solid var(--line); cursor:pointer; text-align:left; background:none; color:inherit; font:inherit; }
+  .job[aria-current="true"] { border-color:var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .job .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:550; }
+  .job .meta { grid-column:1 / -1; font-size:12.5px; color:var(--muted); }
+  .badge { font-size:12px; padding:1px 8px; border-radius:99px; background:var(--line); align-self:center; }
+  .badge.done { background:var(--accent-soft); color:var(--accent); }
+  .badge.error { color:var(--danger); }
+  .badge.running::before { content:""; display:inline-block; width:8px; height:8px; margin-right:5px;
+     border-radius:50%; border:2px solid currentColor; border-right-color:transparent; animation:spin .8s linear infinite; vertical-align:-1px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .job .mini { grid-column:1 / -1; height:3px; border-radius:2px; background:var(--line); overflow:hidden; margin-top:4px; }
+  .job .mini i, .prog .track i { display:block; height:100%; background:var(--accent); border-radius:inherit;
+                    transition: width .6s ease; }
+  .prog { width:min(460px, 90%); }
+  .prog .phase { font-size:17px; font-weight:600; margin-bottom:4px; }
+  .prog .sub { color:var(--muted); font-size:13.5px; margin-bottom:14px; }
+  .prog .track { height:10px; border-radius:6px; background:var(--line); overflow:hidden; }
+  .prog .track.indet i { width:30% !important; animation: indet 1.3s ease-in-out infinite; }
+  @keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  .prog .nums { display:flex; justify-content:space-between; margin-top:8px; font-size:13.5px;
+                font-variant-numeric: tabular-nums; }
+  .prog .nums b { font-size:15px; }
+  .prog ol { list-style:none; padding:0; margin:22px 0 0; display:flex; gap:6px; font-size:12.5px; color:var(--muted); }
+  .prog ol li { flex:1; padding-top:6px; border-top:2px solid var(--line); }
+  .prog ol li.on { color:var(--ink); border-color:var(--accent); font-weight:600; }
+  .prog ol li.past { color:var(--accent); border-color:var(--accent); }
+  .prog .actions { margin-top:26px; text-align:center; }
+  button.stop { color:var(--danger); }
+  button.stop:hover:not(:disabled) { border-color:var(--danger); background:color-mix(in srgb, var(--danger) 8%, transparent); }
+  .badge.cancelled { color:var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .prog .track.indet i { animation:none; width:100% !important; opacity:.4; } }
+  main { display:flex; flex-direction:column; overflow:hidden; }
+  .bar { display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .bar .title { font-weight:600; margin-right:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:50%; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { border:0; border-radius:0; }
+  .seg button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent); }
+  button, a.btn { font:inherit; font-size:13.5px; padding:6px 12px; border-radius:8px; border:1px solid var(--line);
+           background:var(--panel); color:var(--ink); cursor:pointer; text-decoration:none; }
+  button:hover:not(:disabled), a.btn:hover { border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary, a.btn.primary { background:var(--accent); border-color:var(--accent); color:var(--panel); }
+
+  .view { flex:1; overflow:auto; min-height:0; }
+  .empty { height:100%; display:grid; place-items:center; color:var(--muted); text-align:center; padding:40px; }
+  pre.raw { margin:0; padding:20px 24px; font:13px/1.6 var(--mono); white-space:pre-wrap; word-break:break-word; }
+  .md { padding:24px 36px; max-width:920px; }
+  .md table { border-collapse:collapse; margin:12px 0; font-size:14px; display:block; overflow-x:auto; }
+  .md th, .md td { border:1px solid var(--line); padding:5px 9px; vertical-align:top; }
+  .md th { background:var(--bg); }
+  .md img { max-width:100%; height:auto; border:1px solid var(--line); border-radius:6px; }
+  .md code { font-family:var(--mono); font-size:.9em; background:var(--bg); padding:1px 4px; border-radius:4px; }
+  .md h1, .md h2, .md h3 { letter-spacing:-0.01em; margin-top:1.6em; }
+  .err { color:var(--danger); padding:24px; white-space:pre-wrap; font-family:var(--mono); font-size:13px; }
+  dialog { border:1px solid var(--line); border-radius:12px; padding:0; width:min(640px, 92vw);
+           background:var(--panel); color:var(--ink); }
+  dialog::backdrop { background: rgb(0 0 0 / .35); }
+  .dlg-head { padding:16px 20px 10px; }
+  .dlg-head h2 { margin:0; font-size:17px; }
+  .dlg-head .dir { font:12.5px var(--mono); color:var(--muted); word-break:break-all; margin-top:4px; }
+  .files { max-height:min(420px, 55vh); overflow:auto; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .files label { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center;
+                 padding:9px 20px; cursor:pointer; border-bottom:1px solid var(--line); }
+  .files label:last-child { border-bottom:0; }
+  .files label:hover { background:var(--bg); }
+  .files label:has(input:checked) { background:var(--accent-soft); }
+  .files input { margin:0; }
+  .files .fn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .files .fs { color:var(--muted); font-size:12.5px; white-space:nowrap; }
+  .files .none { padding:28px 20px; color:var(--muted); text-align:center; }
+  .dlg-foot { display:flex; gap:8px; padding:12px 20px; align-items:center; }
+  .dlg-foot .spacer { flex:1; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--panel);
+           padding:8px 16px; border-radius:8px; font-size:14px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside>
+    <h1>pdf2md<span>PDF를 Markdown으로 변환 · Docling</span></h1>
+
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="PDF 파일 선택">
+      <strong>PDF를 끌어다 놓거나 클릭</strong>
+      클릭하면 폴더의 PDF 목록에서 고를 수 있습니다
+    </div>
+    <!-- 드롭존 밖에 둬야 input.click()이 드롭존 클릭(목록 창 열기)으로 번지지 않는다 -->
+    <input type="file" id="file" accept="application/pdf,.pdf" multiple hidden>
+
+    <fieldset>
+      <legend>이미지 처리</legend>
+      <label class="opt"><input type="radio" name="img" value="placeholder" checked>
+        <span>생략<small>이미지 자리에 &lt;!-- image --&gt; 표시. 가장 빠름</small></span></label>
+      <label class="opt"><input type="radio" name="img" value="embedded">
+        <span>MD에 포함<small>base64로 넣어 파일 하나로 완결</small></span></label>
+      <label class="opt"><input type="radio" name="img" value="referenced">
+        <span>별도 파일 (ZIP)<small>.md + 이미지 폴더를 ZIP으로</small></span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>텍스트 인식</legend>
+      <label class="opt"><input type="checkbox" id="ocr">
+        <span>OCR 사용<small>스캔본 PDF일 때만 켜세요. 느려집니다</small></span></label>
+    </fieldset>
+
+    <div class="jobs" id="jobs" aria-live="polite"></div>
+  </aside>
+
+  <main>
+    <div class="bar">
+      <div class="title" id="title">변환 결과</div>
+      <div class="seg" role="group" aria-label="보기 방식">
+        <button id="v-render" aria-pressed="true">미리보기</button>
+        <button id="v-raw" aria-pressed="false">원문</button>
+      </div>
+      <button id="copy" disabled>복사</button>
+      <a class="btn primary" id="dl" hidden>.md 다운로드</a>
+      <a class="btn" id="dlzip" hidden>ZIP 다운로드</a>
+    </div>
+    <div class="view" id="view"><div class="empty">왼쪽에 PDF를 올리면 여기에 결과가 표시됩니다.</div></div>
+  </main>
+</div>
+<dialog id="picker" aria-labelledby="picker-title">
+  <form method="dialog">
+    <div class="dlg-head">
+      <h2 id="picker-title">변환할 PDF 선택</h2>
+      <div class="dir" id="picker-dir"></div>
+    </div>
+    <div class="files" id="picker-list"></div>
+    <div class="dlg-foot">
+      <button type="button" id="picker-browse">다른 위치에서 찾기…</button>
+      <span class="spacer"></span>
+      <button value="cancel">취소</button>
+      <button type="button" class="primary" id="picker-ok" disabled>변환</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const jobs = new Map();       // id -> job
+const mdCache = new Map();    // id -> markdown
+let current = null;
+let viewMode = "render";
+
+const STATUS = { queued: "대기", running: "변환 중", done: "완료", error: "실패", cancelled: "중지됨" };
+const PHASES = [
+  ["initialize", "모델 준비"], ["build", "페이지 분석"], ["assemble", "문서 조립"], ["write", "저장"],
+];
+const pct = (j) => Math.round((j.progress || 0) * 100);
+const fmtTime = (sec) => {
+  sec = Math.max(0, Math.round(sec));
+  return sec < 60 ? `${sec}초` : `${Math.floor(sec / 60)}분 ${String(sec % 60).padStart(2, "0")}초`;
+};
+function phaseText(j) {
+  if (j.status === "queued") return j.queue_ahead ? `대기 중 · 앞에 ${j.queue_ahead}개` : "대기 중";
+  if (j.phase === "build" && j.pages) return `${j.done_pages}/${j.pages}쪽`;
+  return (PHASES.find(([k]) => k === j.phase) || [, "변환 중"])[1];
+}
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+function renderJobs() {
+  const box = $("jobs");
+  box.replaceChildren(...[...jobs.values()].reverse().map((j) => {
+    const b = document.createElement("button");
+    b.className = "job";
+    b.setAttribute("aria-current", j.id === current ? "true" : "false");
+    const name = Object.assign(document.createElement("span"), { className: "name", textContent: j.filename });
+    const active = j.status === "running" || j.status === "queued";
+    const label = active ? (j.status === "running" ? `${pct(j)}%` : "대기") : (STATUS[j.status] || j.status);
+    const badge = Object.assign(document.createElement("span"), { className: `badge ${j.status}`, textContent: label });
+    const bits = [];
+    if (active) bits.push(phaseText(j));
+    else if (j.pages) bits.push(`${j.pages}쪽`);
+    if (j.elapsed != null) bits.push(fmtTime(j.elapsed));
+    bits.push({ placeholder: "이미지 생략", embedded: "이미지 포함", referenced: "ZIP" }[j.image_mode]);
+    if (j.do_ocr) bits.push("OCR");
+    const meta = Object.assign(document.createElement("span"), { className: "meta", textContent: bits.join(" · ") });
+    b.append(name, badge, meta);
+    if (j.status === "running") {
+      const mini = Object.assign(document.createElement("span"), { className: "mini" });
+      mini.setAttribute("role", "progressbar");
+      mini.setAttribute("aria-valuenow", pct(j));
+      const bar = document.createElement("i");
+      bar.style.width = `${pct(j)}%`;
+      mini.append(bar);
+      b.append(mini);
+    }
+    b.onclick = () => select(j.id);
+    return b;
+  }));
+}
+
+function optionsForm() {
+  const fd = new FormData();
+  fd.append("image_mode", document.querySelector("input[name=img]:checked").value);
+  fd.append("do_ocr", $("ocr").checked);
+  return fd;
+}
+
+function upload(file) {
+  const fd = optionsForm();
+  fd.append("file", file);
+  return submitJob("/api/jobs", fd, file.name);
+}
+
+function convertLocal(name) {
+  const fd = optionsForm();
+  fd.append("name", name);
+  return submitJob("/api/jobs/local", fd, name);
+}
+
+async function submitJob(url, fd, label) {
+  try {
+    const res = await fetch(url, { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    jobs.set(data.id, data);
+    if (!current) select(data.id);
+    renderJobs();
+    poll(data.id);
+  } catch (e) {
+    toast(`${label}: ${e.message}`);
+  }
+}
+
+async function poll(id) {
+  while (true) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const res = await fetch(`/api/jobs/${id}`);
+    if (!res.ok) return;
+    const j = await res.json();
+    jobs.set(id, j);
+    renderJobs();
+    if (id === current) showJob();
+    if (j.status === "done" || j.status === "error" || j.status === "cancelled") {
+      if (j.status === "done") toast(`${j.filename} 변환 완료`);
+      return;
+    }
+  }
+}
+
+function select(id) { current = id; renderJobs(); showJob(); }
+
+async function showJob() {
+  const j = jobs.get(current);
+  const view = $("view");
+  $("title").textContent = j ? j.filename : "변환 결과";
+  const done = j && j.status === "done";
+  $("copy").disabled = !done;
+  $("dl").hidden = !done;
+  $("dlzip").hidden = !(done && j.has_zip);
+  if (!j) return;
+  if (j.status === "error") {
+    view.innerHTML = ""; view.append(Object.assign(document.createElement("div"), { className: "err", textContent: j.error }));
+    return;
+  }
+  if (j.status === "cancelled") {
+    view.innerHTML = `<div class="empty"><div>변환을 중지했습니다.<br><small>다시 하려면 파일을 다시 선택하세요</small></div></div>`;
+    return;
+  }
+  if (!done) {
+    renderProgress(view, j);
+    return;
+  }
+  $("dl").href = `/api/jobs/${j.id}/markdown?download=true`;
+  $("dlzip").href = `/api/jobs/${j.id}/zip`;
+  if (!mdCache.has(j.id)) {
+    const res = await fetch(`/api/jobs/${j.id}/markdown`);
+    mdCache.set(j.id, await res.text());
+  }
+  if (current !== j.id) return;
+  const md = mdCache.get(j.id);
+  if (viewMode === "raw" || !window.marked) {
+    view.replaceChildren(Object.assign(document.createElement("pre"), { className: "raw", textContent: md }));
+  } else {
+    const div = document.createElement("div");
+    div.className = "md";
+    div.innerHTML = DOMPurify.sanitize(marked.parse(md));
+    // referenced 모드: 상대경로 이미지를 서버 엔드포인트로 연결
+    div.querySelectorAll("img").forEach((img) => {
+      const src = img.getAttribute("src") || "";
+      if (!/^(data:|https?:|\/)/.test(src)) {
+        img.src = `/api/jobs/${j.id}/artifacts/${encodeURIComponent(src.split("/").pop())}`;
+      }
+    });
+    view.replaceChildren(div);
+  }
+}
+
+async function cancelJob(id, btn) {
+  btn.disabled = true;
+  btn.textContent = "중지하는 중…";
+  try {
+    const res = await fetch(`/api/jobs/${id}/cancel`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    jobs.set(id, data);
+    renderJobs();
+    if (id === current) showJob();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "변환 중지";
+    toast(`중지하지 못했습니다: ${e.message}`);
+  }
+}
+
+function renderProgress(view, j) {
+  // 매 폴링마다 다시 만들지 않고 값만 바꿔 막대 애니메이션이 부드럽게 이어지게 한다.
+  let box = view.querySelector(".prog");
+  if (!box || box.dataset.job !== j.id) {
+    view.innerHTML = `<div class="empty"><div class="prog">
+      <div class="phase"></div><div class="sub"></div>
+      <div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i style="width:0"></i></div>
+      <div class="nums"><span class="left"></span><span class="right"></span></div>
+      <ol>${PHASES.map(([k, t]) => `<li data-k="${k}">${t}</li>`).join("")}</ol>
+      <div class="actions"><button class="stop" type="button">변환 중지</button></div>
+    </div></div>`;
+    box = view.querySelector(".prog");
+    box.dataset.job = j.id;
+    const stopBtn = box.querySelector(".stop");
+    stopBtn.onclick = () => cancelJob(j.id, stopBtn);
+  }
+  const p = pct(j);
+  const queued = j.status === "queued";
+  const indet = queued || j.phase === "initialize" || (j.phase === "build" && !j.done_pages);
+  box.querySelector(".phase").textContent = queued ? phaseText(j)
+    : (PHASES.find(([k]) => k === j.phase) || [, "변환 중"])[1] + (j.phase === "build" ? " 중" : "…");
+  box.querySelector(".sub").textContent = queued ? "앞선 변환이 끝나면 자동으로 시작합니다"
+    : j.phase === "initialize" ? "처음 한 번은 모델을 불러오느라 시간이 걸립니다"
+    : j.phase === "build" ? "레이아웃·표 구조를 인식하고 있습니다"
+    : "Markdown을 만들고 있습니다";
+  const track = box.querySelector(".track");
+  track.classList.toggle("indet", indet);
+  track.setAttribute("aria-valuenow", p);
+  track.querySelector("i").style.width = `${p}%`;
+  box.querySelector(".left").innerHTML = queued ? "" :
+    `<b>${p}%</b>` + (j.pages ? ` · ${j.done_pages || 0} / ${j.pages}쪽` : "");
+  const right = [];
+  if (j.elapsed != null) right.push(`경과 ${fmtTime(j.elapsed)}`);
+  if (j.eta != null) right.push(`남은 시간 약 ${fmtTime(j.eta)}`);
+  box.querySelector(".right").textContent = right.join(" · ");
+  const stopBtn = box.querySelector(".stop");
+  if (!stopBtn.disabled) stopBtn.textContent = queued ? "대기열에서 빼기" : "변환 중지";
+  const idx = PHASES.findIndex(([k]) => k === j.phase);
+  box.querySelectorAll("ol li").forEach((li, i) => {
+    li.className = i < idx ? "past" : i === idx ? "on" : "";
+  });
+}
+
+function setView(mode) {
+  viewMode = mode;
+  $("v-render").setAttribute("aria-pressed", mode === "render");
+  $("v-raw").setAttribute("aria-pressed", mode === "raw");
+  showJob();
+}
+$("v-render").onclick = () => setView("render");
+$("v-raw").onclick = () => setView("raw");
+$("copy").onclick = async () => {
+  await navigator.clipboard.writeText(mdCache.get(current) || "");
+  toast("Markdown을 클립보드에 복사했습니다");
+};
+
+const drop = $("drop"), input = $("file");
+const handle = (files) => [...files].filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf").forEach(upload);
+const fmtSize = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`;
+const picker = $("picker"), list = $("picker-list");
+
+async function openPicker() {
+  list.replaceChildren(Object.assign(document.createElement("div"), { className: "none", textContent: "불러오는 중…" }));
+  $("picker-ok").disabled = true;
+  picker.showModal();
+  try {
+    const res = await fetch("/api/local-files");
+    const data = await res.json();
+    $("picker-dir").textContent = data.dir;
+    if (!data.files.length) {
+      list.replaceChildren(Object.assign(document.createElement("div"), { className: "none", textContent: "이 폴더에 PDF가 없습니다." }));
+      return;
+    }
+    list.replaceChildren(...data.files.map((f) => {
+      const row = document.createElement("label");
+      const cb = Object.assign(document.createElement("input"), { type: "checkbox", value: f.name });
+      cb.onchange = () => { $("picker-ok").disabled = !list.querySelector("input:checked"); };
+      row.append(cb,
+        Object.assign(document.createElement("span"), { className: "fn", textContent: f.name, title: f.name }),
+        Object.assign(document.createElement("span"), { className: "fs", textContent: fmtSize(f.size) }));
+      return row;
+    }));
+  } catch (e) {
+    list.replaceChildren(Object.assign(document.createElement("div"), { className: "none", textContent: `목록을 불러오지 못했습니다: ${e.message}` }));
+  }
+}
+
+$("picker-ok").onclick = () => {
+  const names = [...list.querySelectorAll("input:checked")].map((cb) => cb.value);
+  picker.close();
+  names.forEach(convertLocal);
+};
+$("picker-browse").onclick = () => { picker.close(); input.click(); };
+
+drop.onclick = openPicker;
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPicker(); } };
+input.onchange = () => { handle(input.files); input.value = ""; };
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => handle(e.dataTransfer.files));
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => { if (!drop.contains(e.target)) { e.preventDefault(); handle(e.dataTransfer.files); } });
+</script>
+</body>
+</html>

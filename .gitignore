@@ -1,0 +1,13 @@
+# 환경
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# 데이터·산출물 (공개 저장소에서 제외)
+pdf/
+법규/
+1_artifacts/
+2_artifacts/
+dist/
+*.xlsx

@@ -1,0 +1,5 @@
+# pdf2md 직접 의존성 (설치 시 하위 패키지는 pip가 맞춰서 설치)
+docling==2.151.1
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
